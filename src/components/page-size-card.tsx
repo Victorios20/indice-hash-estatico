@@ -7,14 +7,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 
 type Props = {
   value: string
   onChange: (next: string) => void
   disabled?: boolean
+  canDivide: boolean
+  onDivide: () => void
 }
 
-export function PageSizeCard({ value, onChange, disabled }: Props) {
+export function PageSizeCard({ value, onChange, disabled, canDivide, onDivide }: Props) {
   const parsed = useMemo(() => {
     if (value.trim().length === 0) return { ok: false, n: 0 }
     const n = Number(value)
@@ -31,7 +34,7 @@ export function PageSizeCard({ value, onChange, disabled }: Props) {
           <Layers className="h-5 w-5" />
           Tamanho da página
         </CardTitle>
-        <CardDescription>Defina quantos registros (palavras) cabem em cada página.</CardDescription>
+        <CardDescription>Quantos registros (palavras) cabem em cada página.</CardDescription>
       </CardHeader>
 
       <CardContent className="space-y-4">
@@ -47,7 +50,7 @@ export function PageSizeCard({ value, onChange, disabled }: Props) {
             disabled={disabled}
             min={1}
           />
-          <p className="text-xs text-muted-foreground">Regra: deve ser um número inteiro maior que zero.</p>
+          <p className="text-xs text-muted-foreground">Use um número inteiro maior que zero.</p>
         </div>
 
         {!parsed.ok && value.trim().length > 0 && (
@@ -56,6 +59,21 @@ export function PageSizeCard({ value, onChange, disabled }: Props) {
             <AlertTitle>Valor inválido</AlertTitle>
             <AlertDescription>Digite um número inteiro maior que zero.</AlertDescription>
           </Alert>
+        )}
+
+        <Button
+          type="button"
+          className="w-full rounded-xl"
+          disabled={!canDivide}
+          onClick={onDivide}
+        >
+          Dividir em páginas
+        </Button>
+
+        {!canDivide && (
+          <p className="text-xs text-muted-foreground">
+            Para dividir: carregue o arquivo e informe um tamanho de página válido.
+          </p>
         )}
       </CardContent>
     </Card>
