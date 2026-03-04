@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import React, { useMemo } from 'react'
 import { Boxes, AlertCircle } from 'lucide-react'
@@ -49,7 +49,7 @@ export function IndexSetupCard({
           <Boxes className="h-5 w-5" />
           Índice Hash
         </CardTitle>
-        <CardDescription>Defina FR e crie os buckets (NB é calculado automaticamente).</CardDescription>
+        <CardDescription>Defina FR e construa o índice (NB é calculado automaticamente).</CardDescription>
       </CardHeader>
 
       <CardContent className="space-y-4">
@@ -75,7 +75,7 @@ export function IndexSetupCard({
           </Alert>
         )}
 
-        <div className="rounded-xl border p-4 space-y-2">
+        <div className="space-y-2 rounded-xl border p-4">
           <div className="flex items-center justify-between">
             <span className="text-sm text-muted-foreground">NR (registros)</span>
             <span className="text-sm font-semibold">{nr}</span>
@@ -92,19 +92,15 @@ export function IndexSetupCard({
               {ruleOk ? 'OK' : 'Inválida'}
             </span>
           </div>
-
-          <p className="text-xs text-muted-foreground">
-            A regra garante espaço no índice e reduz colisões por bucket cheio.
-          </p>
         </div>
 
         <Button type="button" className="w-full rounded-xl" disabled={!canCreate} onClick={onCreate}>
-          Criar buckets
+          Construir índice
         </Button>
 
         {!canCreate && (
           <p className="text-xs text-muted-foreground">
-            Para criar: carregue o arquivo, divida em páginas e informe um FR válido.
+            Para construir: carregue o arquivo, divida em páginas e informe um FR válido.
           </p>
         )}
 

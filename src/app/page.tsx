@@ -1,7 +1,7 @@
 ﻿'use client'
 
 import React, { useMemo, useRef, useState } from 'react'
-import { Upload, AlertCircle, CheckCircle2, Boxes } from 'lucide-react'
+import { Upload, AlertCircle, CheckCircle2, Boxes, Hash } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -14,10 +14,14 @@ import { PagesPreviewCard } from '@/components/pages-preview-card'
 import { IndexSetupCard } from '@/components/index-setup-card'
 
 import type { Page } from '@/domain/page'
+import type { HashBuildStats, HashFunctionName, HashIndex } from '@/domain/hash-index'
 import { buildPages } from '@/services/paging'
-
-import type { HashIndex } from '@/domain/hash-index'
-import { calculateNB, createEmptyIndex, isValidNB } from '@/services/hash-index'
+import {
+  buildIndexFromPages,
+  calculateNB,
+  hashKeyToBucket,
+  isValidNB,
+} from '@/services/hash-index'
 
 type LoadState =
   | { status: 'idle' }
@@ -45,7 +49,11 @@ export default function Page() {
   const [pagesMeta, setPagesMeta] = useState<PagesMeta>({ status: 'idle' })
 
   const [fr, setFr] = useState<string>('4')
+  const [hashFunction, setHashFunction] = useState<HashFunctionName>('djb2')
+  const [sampleKey, setSampleKey] = useState<string>('')
+
   const [hashIndex, setHashIndex] = useState<HashIndex | null>(null)
+  const [buildStats, setBuildStats] = useState<HashBuildStats | null>(null)
 
   const totalWords = useMemo(() => words.length, [words])
 
@@ -53,9 +61,7 @@ export default function Page() {
     const raw = pageSize.trim()
     if (raw.length === 0) return { ok: false, n: 0 }
     const n = Number(raw)
-    if (!Number.isFinite(n)) return { ok: false, n: 0 }
-    if (!Number.isInteger(n)) return { ok: false, n: 0 }
-    if (n <= 0) return { ok: false, n: 0 }
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return { ok: false, n: 0 }
     return { ok: true, n }
   }, [pageSize])
 
@@ -63,9 +69,7 @@ export default function Page() {
     const raw = fr.trim()
     if (raw.length === 0) return { ok: false, n: 0 }
     const n = Number(raw)
-    if (!Number.isFinite(n)) return { ok: false, n: 0 }
-    if (!Number.isInteger(n)) return { ok: false, n: 0 }
-    if (n <= 0) return { ok: false, n: 0 }
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return { ok: false, n: 0 }
     return { ok: true, n }
   }, [fr])
 
@@ -82,8 +86,13 @@ export default function Page() {
     return isValidNB(totalWords, frValidation.n, nb)
   }, [totalWords, frValidation, nb])
 
-  const canCreateBuckets =
+  const canBuildIndex =
     pagesMeta.status === 'ready' && totalWords > 0 && frValidation.ok && ruleOk && nb > 0
+
+  const sampleBucket = useMemo(() => {
+    if (sampleKey.trim().length === 0 || nb <= 0) return null
+    return hashKeyToBucket(sampleKey.trim(), nb, hashFunction)
+  }, [sampleKey, nb, hashFunction])
 
   const reset = () => {
     setWords([])
@@ -92,6 +101,8 @@ export default function Page() {
     pagesRef.current = []
     setPagesMeta({ status: 'idle' })
     setHashIndex(null)
+    setBuildStats(null)
+    setSampleKey('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -100,6 +111,7 @@ export default function Page() {
     setPagesMeta({ status: 'idle' })
     pagesRef.current = []
     setHashIndex(null)
+    setBuildStats(null)
 
     try {
       if (!file.name.toLowerCase().endsWith('.txt')) {
@@ -110,15 +122,14 @@ export default function Page() {
       }
 
       const text = await file.text()
-
       const lines = text
         .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter((l) => l.length > 0)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
 
       if (lines.length === 0) {
         setWords([])
-        setLoadState({ status: 'error', message: 'O arquivo estÃ¡ vazio.' })
+        setLoadState({ status: 'error', message: 'O arquivo está vazio.' })
         if (fileInputRef.current) fileInputRef.current.value = ''
         return
       }
@@ -127,7 +138,7 @@ export default function Page() {
       setLoadState({ status: 'success', total: lines.length, fileName: file.name })
     } catch {
       setWords([])
-      setLoadState({ status: 'error', message: 'NÃ£o foi possÃ­vel ler o arquivo.' })
+      setLoadState({ status: 'error', message: 'Não foi possível ler o arquivo.' })
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
@@ -149,6 +160,7 @@ export default function Page() {
     const last = pages[totalPages - 1]
 
     setHashIndex(null)
+    setBuildStats(null)
 
     setPagesMeta({
       status: 'ready',
@@ -158,10 +170,12 @@ export default function Page() {
     })
   }
 
-  const handleCreateBuckets = () => {
-    if (!canCreateBuckets) return
-    const index = createEmptyIndex(totalWords, frValidation.n, nb)
-    setHashIndex(index)
+  const handleBuildIndex = () => {
+    if (!canBuildIndex) return
+
+    const result = buildIndexFromPages(pagesRef.current, frValidation.n, nb, hashFunction)
+    setHashIndex(result.index)
+    setBuildStats(result.stats)
   }
 
   return (
@@ -169,9 +183,9 @@ export default function Page() {
       <div className="mx-auto max-w-6xl px-6 py-12">
         <div className="flex items-start justify-between gap-4">
           <div className="flex flex-col gap-2">
-            <h1 className="text-3xl font-semibold tracking-tight">Ãndice Hash EstÃ¡tico</h1>
+            <h1 className="text-3xl font-semibold tracking-tight">Índice Hash Estático</h1>
             <p className="text-muted-foreground">
-              Carregue o arquivo, divida em pÃ¡ginas e crie os buckets do Ã­ndice.
+              Carregue o arquivo, divida em páginas e construa o índice hash.
             </p>
           </div>
           <ThemeToggle />
@@ -198,7 +212,7 @@ export default function Page() {
                   onChange={handleFileChange}
                 />
                 <p className="text-xs text-muted-foreground">
-                  O arquivo nÃ£o fica no repositÃ³rio. VocÃª seleciona do seu computador.
+                  O arquivo não fica no repositório. Você seleciona do seu computador.
                 </p>
               </div>
 
@@ -234,7 +248,7 @@ export default function Page() {
                   <CheckCircle2 className="h-4 w-4" />
                   <AlertTitle>Arquivo carregado</AlertTitle>
                   <AlertDescription>
-                    <span className="font-medium">{loadState.fileName}</span> â€” total de palavras:{' '}
+                    <span className="font-medium">{loadState.fileName}</span> - total de palavras:{' '}
                     <span className="font-semibold">{loadState.total}</span>
                   </AlertDescription>
                 </Alert>
@@ -261,7 +275,7 @@ export default function Page() {
 
             <Card className="rounded-2xl">
               <CardHeader>
-                <CardTitle>Total em memÃ³ria</CardTitle>
+                <CardTitle>Total em memória</CardTitle>
                 <CardDescription>Quantidade de registros carregados para simular a tabela.</CardDescription>
               </CardHeader>
 
@@ -284,18 +298,71 @@ export default function Page() {
             </div>
 
             <div className="lg:col-span-2">
+              <Card className="rounded-2xl">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Hash className="h-5 w-5" />
+                    Configuração da função hash
+                  </CardTitle>
+                  <CardDescription>Escolha a função para mapear chave em bucket.</CardDescription>
+                </CardHeader>
+
+                <CardContent className="space-y-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="hashFunction">Função hash</Label>
+                      <select
+                        id="hashFunction"
+                        className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                        value={hashFunction}
+                        onChange={(e) => setHashFunction(e.target.value as HashFunctionName)}
+                      >
+                        <option value="djb2">djb2 (recomendada)</option>
+                        <option value="charCodeSum">charCodeSum (simples)</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="sampleKey">Chave de teste</Label>
+                      <Input
+                        id="sampleKey"
+                        value={sampleKey}
+                        onChange={(e) => setSampleKey(e.target.value)}
+                        placeholder="Ex: banana"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border p-4 text-sm">
+                    {sampleBucket === null ? (
+                      <span className="text-muted-foreground">
+                        Informe uma chave para visualizar o bucket calculado.
+                      </span>
+                    ) : (
+                      <span>
+                        Bucket calculado: <span className="font-semibold">{sampleBucket}</span> (intervalo
+                        válido: 0..{Math.max(nb - 1, 0)}).
+                      </span>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="lg:col-span-2">
               <IndexSetupCard
                 frValue={fr}
                 onChangeFR={(v) => {
                   setFr(v)
                   setHashIndex(null)
+                  setBuildStats(null)
                 }}
                 nr={totalWords}
                 nb={nb}
                 ruleOk={ruleOk}
                 disabled={pagesMeta.status !== 'ready'}
-                canCreate={canCreateBuckets}
-                onCreate={handleCreateBuckets}
+                canCreate={canBuildIndex}
+                onCreate={handleBuildIndex}
                 created={hashIndex ? { fr: hashIndex.fr, nb: hashIndex.nb } : undefined}
               />
             </div>
@@ -305,38 +372,66 @@ export default function Page() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Boxes className="h-5 w-5" />
-                    Buckets criados
+                    Índice construído
                   </CardTitle>
-                  <CardDescription>PrÃ©via dos primeiros buckets (ainda vazios nesta etapa).</CardDescription>
+                  <CardDescription>
+                    Registros inseridos com resolução de colisões por linear probing.
+                  </CardDescription>
                 </CardHeader>
 
                 <CardContent className="space-y-3">
                   {!hashIndex && (
                     <div className="rounded-xl border bg-muted/40 p-4 text-sm text-muted-foreground">
-                      Crie os buckets para ver a prÃ©via aqui.
+                      Construa o índice para ver os buckets preenchidos e as métricas.
                     </div>
                   )}
 
-                  {hashIndex && (
-                    <div className="space-y-2">
-                      <div className="rounded-xl border p-4 text-sm">
-                        <span className="text-muted-foreground">FR:</span>{' '}
-                        <span className="font-semibold">{hashIndex.fr}</span>{' '}
-                        <span className="text-muted-foreground">NB:</span>{' '}
-                        <span className="font-semibold">{hashIndex.nb}</span>
+                  {hashIndex && buildStats && (
+                    <>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="rounded-xl border p-4 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Registros indexados</span>
+                            <span className="font-semibold">{buildStats.totalInserted}</span>
+                          </div>
+                          <div className="mt-2 flex items-center justify-between">
+                            <span className="text-muted-foreground">Tempo de construção</span>
+                            <span className="font-semibold">{buildStats.buildTimeMs.toFixed(2)} ms</span>
+                          </div>
+                        </div>
+
+                        <div className="rounded-xl border p-4 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Colisões</span>
+                            <span className="font-semibold">{buildStats.collisions}</span>
+                          </div>
+                          <div className="mt-2 flex items-center justify-between">
+                            <span className="text-muted-foreground">Taxa de colisão</span>
+                            <span className="font-semibold">{buildStats.collisionsRate.toFixed(2)}%</span>
+                          </div>
+                        </div>
                       </div>
 
-                      {hashIndex.buckets.slice(0, 6).map((b) => (
-                        <div key={b.id} className="rounded-xl border p-4 text-sm">
+                      {hashIndex.buckets.slice(0, 6).map((bucket) => (
+                        <div key={bucket.id} className="rounded-xl border p-4 text-sm">
                           <div className="flex items-center justify-between">
-                            <span className="font-medium">Bucket {b.id}</span>
+                            <span className="font-medium">Bucket {bucket.id}</span>
                             <span className="text-muted-foreground">
-                              {b.entries.length}/{b.capacity}
+                              {bucket.entries.length}/{bucket.capacity}
                             </span>
+                          </div>
+
+                          <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                            {bucket.entries.slice(0, 3).map((entry) => (
+                              <div key={`${bucket.id}-${entry.key}`}>
+                                {entry.key} -&gt; página {entry.pageNumber} (home {entry.homeBucketId})
+                              </div>
+                            ))}
+                            {bucket.entries.length === 0 && <div>Sem entradas.</div>}
                           </div>
                         </div>
                       ))}
-                    </div>
+                    </>
                   )}
                 </CardContent>
               </Card>
@@ -347,4 +442,5 @@ export default function Page() {
     </main>
   )
 }
+
 
