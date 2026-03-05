@@ -1,28 +1,18 @@
-﻿
-'use client'
+﻿'use client'
 
 import React, { useMemo, useRef, useState } from 'react'
-import {
-  Upload,
-  AlertCircle,
-  CheckCircle2,
-  Boxes,
-  Hash,
-  Search,
-  Loader2,
-  X,
-  CircleAlert,
-} from 'lucide-react'
 
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { PageSizeCard } from '@/components/page-size-card'
 import { PagesPreviewCard } from '@/components/pages-preview-card'
 import { IndexSetupCard } from '@/components/index-setup-card'
+import { UploadCard } from '@/components/dashboard/upload-card'
+import { TotalMemoryCard } from '@/components/dashboard/total-memory-card'
+import { HashFunctionCard } from '@/components/dashboard/hash-function-card'
+import { IndexBuiltCard } from '@/components/dashboard/index-built-card'
+import { SearchComparisonCard } from '@/components/dashboard/search-comparison-card'
+import { HighlightedPageCard } from '@/components/dashboard/highlighted-page-card'
+import { ToastStack, type DashboardToast } from '@/components/dashboard/toast-stack'
 
 import type { Page } from '@/domain/page'
 import type { HashBuildStats, HashFunctionName, HashIndex } from '@/domain/hash-index'
@@ -53,12 +43,12 @@ type PagesMeta =
     }
 
 type BusyAction = 'divide' | 'build' | 'index-search' | 'table-scan' | null
-type ToastType = 'success' | 'error' | 'warning'
-type AppToast = {
-  id: number
-  type: ToastType
-  title: string
-  description: string
+
+type Comparison = {
+  timeDiffMs: number
+  costDiffPages: number
+  timeGainPercent: number
+  costGainPercent: number
 }
 
 const formatDuration = (ms: number): string => {
@@ -91,16 +81,20 @@ export default function Page() {
   const [tableScanResult, setTableScanResult] = useState<TableScanResult | null>(null)
 
   const [busyAction, setBusyAction] = useState<BusyAction>(null)
-  const [toasts, setToasts] = useState<AppToast[]>([])
+  const [toasts, setToasts] = useState<DashboardToast[]>([])
 
   const isBusy = busyAction !== null || loadState.status === 'loading'
 
-  const addToast = (type: ToastType, title: string, description: string) => {
+  const addToast = (type: DashboardToast['type'], title: string, description: string) => {
     const id = Date.now() + Math.floor(Math.random() * 1000)
     setToasts((prev) => [...prev, { id, type, title, description }])
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id))
     }, 3500)
+  }
+
+  const removeToast = (id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id))
   }
 
   const totalWords = useMemo(() => words.length, [words])
@@ -142,16 +136,26 @@ export default function Page() {
     return hashKeyToBucket(sampleKey.trim(), nb, hashFunction)
   }, [sampleKey, nb, hashFunction])
 
-  const canSearch = useMemo(() => hashIndex !== null && searchKey.trim().length > 0 && !isBusy, [hashIndex, searchKey, isBusy])
-  const canScan = useMemo(() => pagesMeta.status === 'ready' && searchKey.trim().length > 0 && !isBusy, [pagesMeta.status, searchKey, isBusy])
+  const canSearch = useMemo(
+    () => hashIndex !== null && searchKey.trim().length > 0 && !isBusy,
+    [hashIndex, searchKey, isBusy]
+  )
 
-  const comparison = useMemo(() => {
+  const canScan = useMemo(
+    () => pagesMeta.status === 'ready' && searchKey.trim().length > 0 && !isBusy,
+    [pagesMeta.status, searchKey, isBusy]
+  )
+
+  const comparison = useMemo<Comparison | null>(() => {
     if (!indexSearchResult || !tableScanResult) return null
 
     const timeDiffMs = tableScanResult.timeMs - indexSearchResult.timeMs
     const costDiffPages = tableScanResult.costEstimatePages - indexSearchResult.costEstimatePages
     const timeGainPercent = tableScanResult.timeMs <= 0 ? 0 : (timeDiffMs / tableScanResult.timeMs) * 100
-    const costGainPercent = tableScanResult.costEstimatePages <= 0 ? 0 : (costDiffPages / tableScanResult.costEstimatePages) * 100
+    const costGainPercent =
+      tableScanResult.costEstimatePages <= 0
+        ? 0
+        : (costDiffPages / tableScanResult.costEstimatePages) * 100
 
     return { timeDiffMs, costDiffPages, timeGainPercent, costGainPercent }
   }, [indexSearchResult, tableScanResult])
@@ -281,7 +285,11 @@ export default function Page() {
       setHashIndex(result.index)
       setBuildStats(result.stats)
       setIndexSearchResult(null)
-      addToast('success', 'Índice construído', `${result.stats.totalInserted} registros indexados em ${formatDuration(result.stats.buildTimeMs)}.`)
+      addToast(
+        'success',
+        'Índice construído',
+        `${result.stats.totalInserted} registros indexados em ${formatDuration(result.stats.buildTimeMs)}.`
+      )
     } catch {
       addToast('error', 'Falha na construção', 'Não foi possível construir o índice com os parâmetros atuais.')
     } finally {
@@ -334,171 +342,135 @@ export default function Page() {
 
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="fixed right-4 top-4 z-50 flex w-[360px] flex-col gap-2">
-        {toasts.map((toast) => (
-          <div
-            key={toast.id}
-            className={`rounded-lg border p-3 shadow-sm backdrop-blur ${
-              toast.type === 'success'
-                ? 'border-emerald-500/30 bg-emerald-500/10'
-                : toast.type === 'warning'
-                  ? 'border-amber-500/30 bg-amber-500/10'
-                  : 'border-red-500/30 bg-red-500/10'
-            }`}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-start gap-2">
-                {toast.type === 'success' && <CheckCircle2 className="mt-0.5 h-4 w-4" />}
-                {toast.type === 'warning' && <CircleAlert className="mt-0.5 h-4 w-4" />}
-                {toast.type === 'error' && <AlertCircle className="mt-0.5 h-4 w-4" />}
-                <div>
-                  <div className="text-sm font-semibold">{toast.title}</div>
-                  <div className="text-xs text-muted-foreground">{toast.description}</div>
-                </div>
-              </div>
-              <button type="button" onClick={() => setToasts((prev) => prev.filter((t) => t.id !== toast.id))} className="rounded p-1 hover:bg-black/10">
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
+      <ToastStack toasts={toasts} onDismiss={removeToast} />
 
       <div className="mx-auto max-w-6xl px-6 py-12">
         <div className="flex items-start justify-between gap-4">
           <div className="flex flex-col gap-2">
             <h1 className="text-3xl font-semibold tracking-tight">Índice Hash Estático</h1>
-            <p className="text-muted-foreground">Carregue o arquivo, divida em páginas, construa o índice e compare com table scan.</p>
+            <p className="text-muted-foreground">
+              Fluxo guiado em etapas: carga, paginação, construção do índice e comparação de buscas.
+            </p>
           </div>
           <ThemeToggle />
         </div>
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-3">
-          <Card className="rounded-2xl lg:col-span-1">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Upload className="h-5 w-5" />Carregar arquivo</CardTitle>
-              <CardDescription>Selecione o words.txt (1 palavra por linha).</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="wordsFile">Arquivo (.txt)</Label>
-                <Input ref={fileInputRef} id="wordsFile" type="file" accept=".txt,text/plain" onChange={handleFileChange} disabled={isBusy} />
-                <p className="text-xs text-muted-foreground">O arquivo não fica no repositório. Você seleciona do seu computador.</p>
+        <section className="mt-8 space-y-6">
+          <div>
+            <h2 className="text-lg font-semibold">Etapa 1: Carga e Paginação</h2>
+            <p className="text-sm text-muted-foreground">Carregue o arquivo e divida os registros em páginas.</p>
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-3">
+            <div className="lg:col-span-1">
+              <UploadCard
+                fileInputRef={fileInputRef}
+                loadState={loadState}
+                isBusy={isBusy}
+                onFileChange={handleFileChange}
+                onReset={reset}
+              />
+            </div>
+
+            <div className="grid gap-6 lg:col-span-2 lg:grid-cols-2">
+              <PageSizeCard
+                value={pageSize}
+                onChange={setPageSize}
+                disabled={loadState.status !== 'success' || isBusy}
+                canDivide={canDividePages}
+                onDivide={() => void handleDividePages()}
+                isLoading={busyAction === 'divide'}
+              />
+
+              <TotalMemoryCard totalWords={totalWords} />
+
+              <div className="lg:col-span-2">
+                <PagesPreviewCard
+                  totalPages={pagesMeta.status === 'ready' ? pagesMeta.totalPages : 0}
+                  firstPage={pagesMeta.status === 'ready' ? pagesMeta.firstPage : undefined}
+                  lastPage={pagesMeta.status === 'ready' ? pagesMeta.lastPage : undefined}
+                />
               </div>
-              <div className="flex items-center gap-2">
-                <Button type="button" onClick={() => fileInputRef.current?.click()} disabled={isBusy} className="rounded-xl">
-                  {loadState.status === 'loading' ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Carregando...</> : 'Selecionar'}
-                </Button>
-                <Button type="button" variant="outline" onClick={reset} className="rounded-xl" disabled={isBusy}>Limpar</Button>
-              </div>
-
-              {loadState.status === 'idle' && <div className="rounded-xl border bg-muted/40 p-4 text-sm text-muted-foreground">Nenhum arquivo carregado ainda.</div>}
-              {loadState.status === 'loading' && <div className="rounded-xl border bg-muted/40 p-4 text-sm">Carregando arquivo...</div>}
-              {loadState.status === 'success' && <Alert className="rounded-xl"><CheckCircle2 className="h-4 w-4" /><AlertTitle>Arquivo carregado</AlertTitle><AlertDescription><span className="font-medium">{loadState.fileName}</span> - total de palavras: <span className="font-semibold">{loadState.total}</span></AlertDescription></Alert>}
-              {loadState.status === 'error' && <Alert variant="destructive" className="rounded-xl"><AlertCircle className="h-4 w-4" /><AlertTitle>Erro ao carregar</AlertTitle><AlertDescription>{loadState.message}</AlertDescription></Alert>}
-            </CardContent>
-          </Card>
-
-          <div className="grid gap-6 lg:col-span-2 lg:grid-cols-2">
-            <PageSizeCard value={pageSize} onChange={setPageSize} disabled={loadState.status !== 'success' || isBusy} canDivide={canDividePages} onDivide={() => void handleDividePages()} isLoading={busyAction === 'divide'} />
-
-            <Card className="rounded-2xl">
-              <CardHeader><CardTitle>Total em memória</CardTitle><CardDescription>Quantidade de registros carregados para simular a tabela.</CardDescription></CardHeader>
-              <CardContent><div className="rounded-xl border p-4"><div className="flex items-center justify-between"><span className="text-sm text-muted-foreground">Total de palavras</span><span className="text-sm font-semibold">{totalWords}</span></div></div></CardContent>
-            </Card>
-
-            <div className="lg:col-span-2"><PagesPreviewCard totalPages={pagesMeta.status === 'ready' ? pagesMeta.totalPages : 0} firstPage={pagesMeta.status === 'ready' ? pagesMeta.firstPage : undefined} lastPage={pagesMeta.status === 'ready' ? pagesMeta.lastPage : undefined} /></div>
-
-            <div className="lg:col-span-2">
-              <Card className="rounded-2xl">
-                <CardHeader><CardTitle className="flex items-center gap-2"><Hash className="h-5 w-5" />Configuração da função hash</CardTitle><CardDescription>Escolha a função para mapear chave em bucket.</CardDescription></CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="hashFunction">Função hash</Label>
-                      <select id="hashFunction" className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={hashFunction} onChange={(e) => setHashFunction(e.target.value as HashFunctionName)} disabled={isBusy}>
-                        <option value="djb2">djb2 (recomendada)</option>
-                        <option value="charCodeSum">charCodeSum (simples)</option>
-                      </select>
-                    </div>
-                    <div className="space-y-2"><Label htmlFor="sampleKey">Chave de teste</Label><Input id="sampleKey" value={sampleKey} onChange={(e) => setSampleKey(e.target.value)} placeholder="Ex: banana" disabled={isBusy} /></div>
-                  </div>
-                  <div className="rounded-xl border p-4 text-sm">{sampleBucket === null ? <span className="text-muted-foreground">Informe uma chave para visualizar o bucket calculado.</span> : <span>Bucket calculado: <span className="font-semibold">{sampleBucket}</span> (intervalo válido: 0..{Math.max(nb - 1, 0)}).</span>}</div>
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="lg:col-span-2"><IndexSetupCard frValue={fr} onChangeFR={(v) => { setFr(v); setHashIndex(null); setBuildStats(null); setIndexSearchResult(null) }} nr={totalWords} nb={nb} ruleOk={ruleOk} disabled={pagesMeta.status !== 'ready' || isBusy} canCreate={canBuildIndex} onCreate={() => void handleBuildIndex()} created={hashIndex ? { fr: hashIndex.fr, nb: hashIndex.nb } : undefined} isLoading={busyAction === 'build'} /></div>
-
-            <div className="lg:col-span-2">
-              <Card className="rounded-2xl">
-                <CardHeader><CardTitle className="flex items-center gap-2"><Boxes className="h-5 w-5" />Índice construído</CardTitle><CardDescription>Registros inseridos com resolução de colisões e estratégia de overflow.</CardDescription></CardHeader>
-                <CardContent className="space-y-3">
-                  {!hashIndex && <div className="rounded-xl border bg-muted/40 p-4 text-sm text-muted-foreground">Construa o índice para ver os buckets preenchidos e as métricas.</div>}
-                  {hashIndex && buildStats && (
-                    <>
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <div className="rounded-xl border p-4 text-sm"><div className="flex items-center justify-between"><span className="text-muted-foreground">Registros indexados</span><span className="font-semibold">{buildStats.totalInserted}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Tempo de construção</span><span className="font-semibold">{formatDuration(buildStats.buildTimeMs)}</span></div></div>
-                        <div className="rounded-xl border p-4 text-sm"><div className="flex items-center justify-between"><span className="text-muted-foreground">Colisões</span><span className="font-semibold">{buildStats.collisions}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Taxa de colisão</span><span className="font-semibold">{buildStats.collisionsRate.toFixed(2)}%</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Buckets com overflow</span><span className="font-semibold">{buildStats.overflowedBuckets}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Taxa de overflow</span><span className="font-semibold">{buildStats.overflowRate.toFixed(2)}%</span></div></div>
-                      </div>
-
-                      {hashIndex.buckets.slice(0, 10).map((bucket) => {
-                        const isVisited = highlightedBuckets.has(bucket.id)
-                        return (
-                          <div key={bucket.id} className={`rounded-xl border p-4 text-sm ${isVisited ? 'border-amber-500 bg-amber-500/10' : ''}`}>
-                            <div className="flex items-center justify-between"><span className="font-medium">Bucket {bucket.id}</span><span className="text-muted-foreground">{bucket.entries.length}/{bucket.capacity}</span></div>
-                            <div className="mt-2 space-y-1 text-xs text-muted-foreground">{bucket.entries.slice(0, 3).map((entry) => <div key={`${bucket.id}-${entry.key}`}>{entry.key} -&gt; página {entry.pageNumber} (home {entry.homeBucketId}){entry.isOverflow ? ' [overflow]' : ''}</div>)}{bucket.entries.length === 0 && <div>Sem entradas.</div>}</div>
-                          </div>
-                        )
-                      })}
-                    </>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="lg:col-span-2">
-              <Card className="rounded-2xl">
-                <CardHeader><CardTitle className="flex items-center gap-2"><Search className="h-5 w-5" />Busca e comparação</CardTitle><CardDescription>Busque por índice e compare com table scan.</CardDescription></CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
-                    <Input placeholder="Digite a chave de busca" value={searchKey} onChange={(e) => setSearchKey(e.target.value)} disabled={isBusy} />
-                    <Button type="button" onClick={() => void handleSearchByIndex()} disabled={!canSearch}>{busyAction === 'index-search' ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Buscando...</> : 'Buscar no índice'}</Button>
-                    <Button type="button" variant="outline" onClick={() => void handleTableScan()} disabled={!canScan}>{busyAction === 'table-scan' ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Lendo...</> : 'Table scan'}</Button>
-                  </div>
-
-                  {indexSearchResult && <div className="rounded-xl border p-4 text-sm"><div className="flex items-center justify-between"><span className="text-muted-foreground">Busca por índice</span><span className="font-semibold">{indexSearchResult.found ? 'Encontrada' : 'Não encontrada'}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Página</span><span className="font-semibold">{indexSearchResult.pageNumber ?? '-'}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Buckets visitados</span><span className="font-semibold">{indexSearchResult.visitedBuckets.join(', ')}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Custo estimado (leituras)</span><span className="font-semibold">{indexSearchResult.costEstimatePages}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Tempo</span><span className="font-semibold">{formatDuration(indexSearchResult.timeMs)}</span></div></div>}
-
-                  {tableScanResult && <div className="rounded-xl border p-4 text-sm"><div className="flex items-center justify-between"><span className="text-muted-foreground">Table scan</span><span className="font-semibold">{tableScanResult.found ? 'Encontrada' : 'Não encontrada'}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Página</span><span className="font-semibold">{tableScanResult.pageNumber ?? '-'}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Páginas lidas</span><span className="font-semibold">{tableScanResult.pagesRead}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Custo estimado (leituras)</span><span className="font-semibold">{tableScanResult.costEstimatePages}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Tempo</span><span className="font-semibold">{formatDuration(tableScanResult.timeMs)}</span></div><div className="mt-3 rounded-lg border bg-muted/30 p-3 text-xs"><div className="mb-2 font-medium">Registros lidos no scan</div><div className="space-y-2">{tableScanResult.scannedPages.slice(0, 4).map((page) => (<div key={page.pageNumber}><div className="font-medium">Página {page.pageNumber}</div><div className="text-muted-foreground">{page.recordsRead.slice(0, 8).join(', ')}{page.recordsRead.length > 8 ? ' ...' : ''}</div></div>))}{tableScanResult.scannedPages.length > 4 && <div className="text-muted-foreground">+ {tableScanResult.scannedPages.length - 4} páginas lidas.</div>}</div></div></div>}
-
-                  {comparison && <div className="rounded-xl border p-4 text-sm"><div className="flex items-center justify-between"><span className="text-muted-foreground">Diferença de tempo (scan - índice)</span><span className="font-semibold">{formatDuration(comparison.timeDiffMs)}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Ganho percentual de tempo</span><span className="font-semibold">{comparison.timeGainPercent.toFixed(2)}%</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Diferença de custo (páginas)</span><span className="font-semibold">{comparison.costDiffPages}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Ganho percentual de custo</span><span className="font-semibold">{comparison.costGainPercent.toFixed(2)}%</span></div></div>}
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="lg:col-span-2">
-              <Card className="rounded-2xl">
-                <CardHeader><CardTitle>Página acessada na busca</CardTitle><CardDescription>Destaque visual da página tocada durante a busca.</CardDescription></CardHeader>
-                <CardContent>
-                  {!highlightedPage && <div className="rounded-xl border bg-muted/40 p-4 text-sm text-muted-foreground">Faça uma busca para destacar a página acessada.</div>}
-                  {highlightedPage && (
-                    <div className="rounded-xl border border-amber-500 bg-amber-500/10 p-4 text-sm">
-                      <div className="mb-2 font-semibold">Página {highlightedPage.pageNumber}</div>
-                      <div className="grid gap-1">
-                        {highlightedPage.records.slice(0, 12).map((record, idx) => (
-                          <div key={`${record}-${idx}`} className="rounded border bg-background px-2 py-1">{record}</div>
-                        ))}
-                        {highlightedPage.records.length > 12 && <div className="text-xs text-muted-foreground">+ {highlightedPage.records.length - 12} registros nesta página.</div>}
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
             </div>
           </div>
-        </div>
+        </section>
+
+        <section className="mt-10 space-y-6">
+          <div>
+            <h2 className="text-lg font-semibold">Etapa 2: Construção do Índice</h2>
+            <p className="text-sm text-muted-foreground">Configure hash/FR, construa o índice e analise buckets/métricas.</p>
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <HashFunctionCard
+              hashFunction={hashFunction}
+              onChangeHashFunction={setHashFunction}
+              sampleKey={sampleKey}
+              onChangeSampleKey={setSampleKey}
+              sampleBucket={sampleBucket}
+              nb={nb}
+              isBusy={isBusy}
+            />
+
+            <IndexSetupCard
+              frValue={fr}
+              onChangeFR={(v) => {
+                setFr(v)
+                setHashIndex(null)
+                setBuildStats(null)
+                setIndexSearchResult(null)
+              }}
+              nr={totalWords}
+              nb={nb}
+              ruleOk={ruleOk}
+              disabled={pagesMeta.status !== 'ready' || isBusy}
+              canCreate={canBuildIndex}
+              onCreate={() => void handleBuildIndex()}
+              created={hashIndex ? { fr: hashIndex.fr, nb: hashIndex.nb } : undefined}
+              isLoading={busyAction === 'build'}
+            />
+
+            <div className="lg:col-span-2">
+              <IndexBuiltCard
+                hashIndex={hashIndex}
+                buildStats={buildStats}
+                highlightedBuckets={highlightedBuckets}
+                formatDuration={formatDuration}
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className="mt-10 space-y-6">
+          <div>
+            <h2 className="text-lg font-semibold">Etapa 3: Busca e Comparação</h2>
+            <p className="text-sm text-muted-foreground">Execute busca por índice, table scan e compare custo/tempo.</p>
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div className="lg:col-span-2">
+              <SearchComparisonCard
+                searchKey={searchKey}
+                onChangeSearchKey={setSearchKey}
+                isBusy={isBusy}
+                canSearch={canSearch}
+                canScan={canScan}
+                busyAction={busyAction}
+                onSearchByIndex={() => void handleSearchByIndex()}
+                onTableScan={() => void handleTableScan()}
+                indexSearchResult={indexSearchResult}
+                tableScanResult={tableScanResult}
+                comparison={comparison}
+                formatDuration={formatDuration}
+              />
+            </div>
+
+            <div className="lg:col-span-2">
+              <HighlightedPageCard highlightedPage={highlightedPage} />
+            </div>
+          </div>
+        </section>
       </div>
     </main>
   )
 }
-
