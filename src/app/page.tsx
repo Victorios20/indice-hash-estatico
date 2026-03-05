@@ -27,14 +27,14 @@ import { IndexSetupCard } from '@/components/index-setup-card'
 import type { Page } from '@/domain/page'
 import type { HashBuildStats, HashFunctionName, HashIndex } from '@/domain/hash-index'
 import type { IndexSearchResult, TableScanResult } from '@/services/hash-index'
-import { buildPages } from '@/services/paging'
+import { buildPagesAsync } from '@/services/paging'
 import {
-  buildIndexFromPages,
+  buildIndexFromPagesAsync,
   calculateNB,
   hashKeyToBucket,
   isValidNB,
   searchKeyInIndex,
-  tableScanSearch,
+  tableScanSearchAsync,
 } from '@/services/hash-index'
 
 type LoadState =
@@ -89,6 +89,7 @@ export default function Page() {
   const [buildStats, setBuildStats] = useState<HashBuildStats | null>(null)
   const [indexSearchResult, setIndexSearchResult] = useState<IndexSearchResult | null>(null)
   const [tableScanResult, setTableScanResult] = useState<TableScanResult | null>(null)
+
   const [busyAction, setBusyAction] = useState<BusyAction>(null)
   const [toasts, setToasts] = useState<AppToast[]>([])
 
@@ -120,7 +121,8 @@ export default function Page() {
     return { ok: true, n }
   }, [fr])
 
-  const canDividePages = loadState.status === 'success' && totalWords > 0 && pageSizeValidation.ok && !isBusy
+  const canDividePages =
+    loadState.status === 'success' && totalWords > 0 && pageSizeValidation.ok && !isBusy
 
   const nb = useMemo(() => {
     if (!frValidation.ok) return 0
@@ -132,7 +134,8 @@ export default function Page() {
     return isValidNB(totalWords, frValidation.n, nb)
   }, [totalWords, frValidation, nb])
 
-  const canBuildIndex = pagesMeta.status === 'ready' && totalWords > 0 && frValidation.ok && ruleOk && nb > 0 && !isBusy
+  const canBuildIndex =
+    pagesMeta.status === 'ready' && totalWords > 0 && frValidation.ok && ruleOk && nb > 0 && !isBusy
 
   const sampleBucket = useMemo(() => {
     if (sampleKey.trim().length === 0 || nb <= 0) return null
@@ -148,11 +151,26 @@ export default function Page() {
     const timeDiffMs = tableScanResult.timeMs - indexSearchResult.timeMs
     const costDiffPages = tableScanResult.costEstimatePages - indexSearchResult.costEstimatePages
     const timeGainPercent = tableScanResult.timeMs <= 0 ? 0 : (timeDiffMs / tableScanResult.timeMs) * 100
-    const costGainPercent =
-      tableScanResult.costEstimatePages <= 0 ? 0 : (costDiffPages / tableScanResult.costEstimatePages) * 100
+    const costGainPercent = tableScanResult.costEstimatePages <= 0 ? 0 : (costDiffPages / tableScanResult.costEstimatePages) * 100
 
     return { timeDiffMs, costDiffPages, timeGainPercent, costGainPercent }
   }, [indexSearchResult, tableScanResult])
+
+  const highlightedBuckets = useMemo(() => {
+    if (!indexSearchResult) return new Set<number>()
+    return new Set(indexSearchResult.visitedBuckets)
+  }, [indexSearchResult])
+
+  const highlightedPageNumber = useMemo(() => {
+    if (indexSearchResult?.found) return indexSearchResult.pageNumber
+    if (tableScanResult?.found) return tableScanResult.pageNumber
+    return undefined
+  }, [indexSearchResult, tableScanResult])
+
+  const highlightedPage = useMemo(() => {
+    if (!highlightedPageNumber) return null
+    return pagesRef.current[highlightedPageNumber - 1] ?? null
+  }, [highlightedPageNumber, indexSearchResult, tableScanResult])
 
   const reset = () => {
     if (isBusy) return
@@ -170,6 +188,7 @@ export default function Page() {
     if (fileInputRef.current) fileInputRef.current.value = ''
     addToast('success', 'Dados limpos', 'O estado da simulação foi reiniciado.')
   }
+
   const readTxtFile = async (file: File) => {
     setLoadState({ status: 'loading' })
     setPagesMeta({ status: 'idle' })
@@ -226,7 +245,7 @@ export default function Page() {
 
     try {
       await waitNextTick()
-      const pages = buildPages(words, pageSizeValidation.n)
+      const pages = await buildPagesAsync(words, pageSizeValidation.n)
       pagesRef.current = pages
 
       const totalPages = pages.length
@@ -258,7 +277,7 @@ export default function Page() {
 
     try {
       await waitNextTick()
-      const result = buildIndexFromPages(pagesRef.current, frValidation.n, nb, hashFunction)
+      const result = await buildIndexFromPagesAsync(pagesRef.current, frValidation.n, nb, hashFunction)
       setHashIndex(result.index)
       setBuildStats(result.stats)
       setIndexSearchResult(null)
@@ -274,8 +293,8 @@ export default function Page() {
     if (!hashIndex) return
     const key = searchKey.trim()
     if (!key) return
-    setBusyAction('index-search')
 
+    setBusyAction('index-search')
     try {
       await waitNextTick()
       const result = searchKeyInIndex(key, pagesRef.current, hashIndex, hashFunction)
@@ -295,11 +314,11 @@ export default function Page() {
   const handleTableScan = async () => {
     const key = searchKey.trim()
     if (!key) return
-    setBusyAction('table-scan')
 
+    setBusyAction('table-scan')
     try {
       await waitNextTick()
-      const result = tableScanSearch(key, pagesRef.current)
+      const result = await tableScanSearchAsync(key, pagesRef.current)
       setTableScanResult(result)
       addToast(
         result.found ? 'success' : 'warning',
@@ -357,50 +376,26 @@ export default function Page() {
         <div className="mt-8 grid gap-6 lg:grid-cols-3">
           <Card className="rounded-2xl lg:col-span-1">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Upload className="h-5 w-5" />
-                Carregar arquivo
-              </CardTitle>
+              <CardTitle className="flex items-center gap-2"><Upload className="h-5 w-5" />Carregar arquivo</CardTitle>
               <CardDescription>Selecione o words.txt (1 palavra por linha).</CardDescription>
             </CardHeader>
-
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="wordsFile">Arquivo (.txt)</Label>
                 <Input ref={fileInputRef} id="wordsFile" type="file" accept=".txt,text/plain" onChange={handleFileChange} disabled={isBusy} />
                 <p className="text-xs text-muted-foreground">O arquivo não fica no repositório. Você seleciona do seu computador.</p>
               </div>
-
               <div className="flex items-center gap-2">
                 <Button type="button" onClick={() => fileInputRef.current?.click()} disabled={isBusy} className="rounded-xl">
-                  {loadState.status === 'loading' ? (
-                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Carregando...</>
-                  ) : (
-                    'Selecionar'
-                  )}
+                  {loadState.status === 'loading' ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Carregando...</> : 'Selecionar'}
                 </Button>
-
                 <Button type="button" variant="outline" onClick={reset} className="rounded-xl" disabled={isBusy}>Limpar</Button>
               </div>
 
               {loadState.status === 'idle' && <div className="rounded-xl border bg-muted/40 p-4 text-sm text-muted-foreground">Nenhum arquivo carregado ainda.</div>}
               {loadState.status === 'loading' && <div className="rounded-xl border bg-muted/40 p-4 text-sm">Carregando arquivo...</div>}
-
-              {loadState.status === 'success' && (
-                <Alert className="rounded-xl">
-                  <CheckCircle2 className="h-4 w-4" />
-                  <AlertTitle>Arquivo carregado</AlertTitle>
-                  <AlertDescription><span className="font-medium">{loadState.fileName}</span> - total de palavras: <span className="font-semibold">{loadState.total}</span></AlertDescription>
-                </Alert>
-              )}
-
-              {loadState.status === 'error' && (
-                <Alert variant="destructive" className="rounded-xl">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>Erro ao carregar</AlertTitle>
-                  <AlertDescription>{loadState.message}</AlertDescription>
-                </Alert>
-              )}
+              {loadState.status === 'success' && <Alert className="rounded-xl"><CheckCircle2 className="h-4 w-4" /><AlertTitle>Arquivo carregado</AlertTitle><AlertDescription><span className="font-medium">{loadState.fileName}</span> - total de palavras: <span className="font-semibold">{loadState.total}</span></AlertDescription></Alert>}
+              {loadState.status === 'error' && <Alert variant="destructive" className="rounded-xl"><AlertCircle className="h-4 w-4" /><AlertTitle>Erro ao carregar</AlertTitle><AlertDescription>{loadState.message}</AlertDescription></Alert>}
             </CardContent>
           </Card>
 
@@ -412,17 +407,11 @@ export default function Page() {
               <CardContent><div className="rounded-xl border p-4"><div className="flex items-center justify-between"><span className="text-sm text-muted-foreground">Total de palavras</span><span className="text-sm font-semibold">{totalWords}</span></div></div></CardContent>
             </Card>
 
-            <div className="lg:col-span-2">
-              <PagesPreviewCard totalPages={pagesMeta.status === 'ready' ? pagesMeta.totalPages : 0} firstPage={pagesMeta.status === 'ready' ? pagesMeta.firstPage : undefined} lastPage={pagesMeta.status === 'ready' ? pagesMeta.lastPage : undefined} />
-            </div>
+            <div className="lg:col-span-2"><PagesPreviewCard totalPages={pagesMeta.status === 'ready' ? pagesMeta.totalPages : 0} firstPage={pagesMeta.status === 'ready' ? pagesMeta.firstPage : undefined} lastPage={pagesMeta.status === 'ready' ? pagesMeta.lastPage : undefined} /></div>
 
             <div className="lg:col-span-2">
               <Card className="rounded-2xl">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2"><Hash className="h-5 w-5" />Configuração da função hash</CardTitle>
-                  <CardDescription>Escolha a função para mapear chave em bucket.</CardDescription>
-                </CardHeader>
-
+                <CardHeader><CardTitle className="flex items-center gap-2"><Hash className="h-5 w-5" />Configuração da função hash</CardTitle><CardDescription>Escolha a função para mapear chave em bucket.</CardDescription></CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
@@ -439,9 +428,7 @@ export default function Page() {
               </Card>
             </div>
 
-            <div className="lg:col-span-2">
-              <IndexSetupCard frValue={fr} onChangeFR={(v) => { setFr(v); setHashIndex(null); setBuildStats(null); setIndexSearchResult(null) }} nr={totalWords} nb={nb} ruleOk={ruleOk} disabled={pagesMeta.status !== 'ready' || isBusy} canCreate={canBuildIndex} onCreate={() => void handleBuildIndex()} created={hashIndex ? { fr: hashIndex.fr, nb: hashIndex.nb } : undefined} isLoading={busyAction === 'build'} />
-            </div>
+            <div className="lg:col-span-2"><IndexSetupCard frValue={fr} onChangeFR={(v) => { setFr(v); setHashIndex(null); setBuildStats(null); setIndexSearchResult(null) }} nr={totalWords} nb={nb} ruleOk={ruleOk} disabled={pagesMeta.status !== 'ready' || isBusy} canCreate={canBuildIndex} onCreate={() => void handleBuildIndex()} created={hashIndex ? { fr: hashIndex.fr, nb: hashIndex.nb } : undefined} isLoading={busyAction === 'build'} /></div>
 
             <div className="lg:col-span-2">
               <Card className="rounded-2xl">
@@ -454,12 +441,16 @@ export default function Page() {
                         <div className="rounded-xl border p-4 text-sm"><div className="flex items-center justify-between"><span className="text-muted-foreground">Registros indexados</span><span className="font-semibold">{buildStats.totalInserted}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Tempo de construção</span><span className="font-semibold">{formatDuration(buildStats.buildTimeMs)}</span></div></div>
                         <div className="rounded-xl border p-4 text-sm"><div className="flex items-center justify-between"><span className="text-muted-foreground">Colisões</span><span className="font-semibold">{buildStats.collisions}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Taxa de colisão</span><span className="font-semibold">{buildStats.collisionsRate.toFixed(2)}%</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Buckets com overflow</span><span className="font-semibold">{buildStats.overflowedBuckets}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Taxa de overflow</span><span className="font-semibold">{buildStats.overflowRate.toFixed(2)}%</span></div></div>
                       </div>
-                      {hashIndex.buckets.slice(0, 6).map((bucket) => (
-                        <div key={bucket.id} className="rounded-xl border p-4 text-sm">
-                          <div className="flex items-center justify-between"><span className="font-medium">Bucket {bucket.id}</span><span className="text-muted-foreground">{bucket.entries.length}/{bucket.capacity}</span></div>
-                          <div className="mt-2 space-y-1 text-xs text-muted-foreground">{bucket.entries.slice(0, 3).map((entry) => <div key={`${bucket.id}-${entry.key}`}>{entry.key} -&gt; página {entry.pageNumber} (home {entry.homeBucketId}){entry.isOverflow ? ' [overflow]' : ''}</div>)}{bucket.entries.length === 0 && <div>Sem entradas.</div>}</div>
-                        </div>
-                      ))}
+
+                      {hashIndex.buckets.slice(0, 10).map((bucket) => {
+                        const isVisited = highlightedBuckets.has(bucket.id)
+                        return (
+                          <div key={bucket.id} className={`rounded-xl border p-4 text-sm ${isVisited ? 'border-amber-500 bg-amber-500/10' : ''}`}>
+                            <div className="flex items-center justify-between"><span className="font-medium">Bucket {bucket.id}</span><span className="text-muted-foreground">{bucket.entries.length}/{bucket.capacity}</span></div>
+                            <div className="mt-2 space-y-1 text-xs text-muted-foreground">{bucket.entries.slice(0, 3).map((entry) => <div key={`${bucket.id}-${entry.key}`}>{entry.key} -&gt; página {entry.pageNumber} (home {entry.homeBucketId}){entry.isOverflow ? ' [overflow]' : ''}</div>)}{bucket.entries.length === 0 && <div>Sem entradas.</div>}</div>
+                          </div>
+                        )
+                      })}
                     </>
                   )}
                 </CardContent>
@@ -470,16 +461,37 @@ export default function Page() {
               <Card className="rounded-2xl">
                 <CardHeader><CardTitle className="flex items-center gap-2"><Search className="h-5 w-5" />Busca e comparação</CardTitle><CardDescription>Busque por índice e compare com table scan.</CardDescription></CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid gap-3 md:grid-cols-[1fr_auto_auto]"><Input placeholder="Digite a chave de busca" value={searchKey} onChange={(e) => setSearchKey(e.target.value)} disabled={isBusy} />
+                  <div className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
+                    <Input placeholder="Digite a chave de busca" value={searchKey} onChange={(e) => setSearchKey(e.target.value)} disabled={isBusy} />
                     <Button type="button" onClick={() => void handleSearchByIndex()} disabled={!canSearch}>{busyAction === 'index-search' ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Buscando...</> : 'Buscar no índice'}</Button>
                     <Button type="button" variant="outline" onClick={() => void handleTableScan()} disabled={!canScan}>{busyAction === 'table-scan' ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Lendo...</> : 'Table scan'}</Button>
                   </div>
 
                   {indexSearchResult && <div className="rounded-xl border p-4 text-sm"><div className="flex items-center justify-between"><span className="text-muted-foreground">Busca por índice</span><span className="font-semibold">{indexSearchResult.found ? 'Encontrada' : 'Não encontrada'}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Página</span><span className="font-semibold">{indexSearchResult.pageNumber ?? '-'}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Buckets visitados</span><span className="font-semibold">{indexSearchResult.visitedBuckets.join(', ')}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Custo estimado (leituras)</span><span className="font-semibold">{indexSearchResult.costEstimatePages}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Tempo</span><span className="font-semibold">{formatDuration(indexSearchResult.timeMs)}</span></div></div>}
 
-                  {tableScanResult && <div className="rounded-xl border p-4 text-sm"><div className="flex items-center justify-between"><span className="text-muted-foreground">Table scan</span><span className="font-semibold">{tableScanResult.found ? 'Encontrada' : 'Não encontrada'}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Página</span><span className="font-semibold">{tableScanResult.pageNumber ?? '-'}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Páginas lidas</span><span className="font-semibold">{tableScanResult.pagesRead}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Custo estimado (leituras)</span><span className="font-semibold">{tableScanResult.costEstimatePages}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Tempo</span><span className="font-semibold">{formatDuration(tableScanResult.timeMs)}</span></div></div>}
+                  {tableScanResult && <div className="rounded-xl border p-4 text-sm"><div className="flex items-center justify-between"><span className="text-muted-foreground">Table scan</span><span className="font-semibold">{tableScanResult.found ? 'Encontrada' : 'Não encontrada'}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Página</span><span className="font-semibold">{tableScanResult.pageNumber ?? '-'}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Páginas lidas</span><span className="font-semibold">{tableScanResult.pagesRead}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Custo estimado (leituras)</span><span className="font-semibold">{tableScanResult.costEstimatePages}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Tempo</span><span className="font-semibold">{formatDuration(tableScanResult.timeMs)}</span></div><div className="mt-3 rounded-lg border bg-muted/30 p-3 text-xs"><div className="mb-2 font-medium">Registros lidos no scan</div><div className="space-y-2">{tableScanResult.scannedPages.slice(0, 4).map((page) => (<div key={page.pageNumber}><div className="font-medium">Página {page.pageNumber}</div><div className="text-muted-foreground">{page.recordsRead.slice(0, 8).join(', ')}{page.recordsRead.length > 8 ? ' ...' : ''}</div></div>))}{tableScanResult.scannedPages.length > 4 && <div className="text-muted-foreground">+ {tableScanResult.scannedPages.length - 4} páginas lidas.</div>}</div></div></div>}
 
                   {comparison && <div className="rounded-xl border p-4 text-sm"><div className="flex items-center justify-between"><span className="text-muted-foreground">Diferença de tempo (scan - índice)</span><span className="font-semibold">{formatDuration(comparison.timeDiffMs)}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Ganho percentual de tempo</span><span className="font-semibold">{comparison.timeGainPercent.toFixed(2)}%</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Diferença de custo (páginas)</span><span className="font-semibold">{comparison.costDiffPages}</span></div><div className="mt-2 flex items-center justify-between"><span className="text-muted-foreground">Ganho percentual de custo</span><span className="font-semibold">{comparison.costGainPercent.toFixed(2)}%</span></div></div>}
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="lg:col-span-2">
+              <Card className="rounded-2xl">
+                <CardHeader><CardTitle>Página acessada na busca</CardTitle><CardDescription>Destaque visual da página tocada durante a busca.</CardDescription></CardHeader>
+                <CardContent>
+                  {!highlightedPage && <div className="rounded-xl border bg-muted/40 p-4 text-sm text-muted-foreground">Faça uma busca para destacar a página acessada.</div>}
+                  {highlightedPage && (
+                    <div className="rounded-xl border border-amber-500 bg-amber-500/10 p-4 text-sm">
+                      <div className="mb-2 font-semibold">Página {highlightedPage.pageNumber}</div>
+                      <div className="grid gap-1">
+                        {highlightedPage.records.slice(0, 12).map((record, idx) => (
+                          <div key={`${record}-${idx}`} className="rounded border bg-background px-2 py-1">{record}</div>
+                        ))}
+                        {highlightedPage.records.length > 12 && <div className="text-xs text-muted-foreground">+ {highlightedPage.records.length - 12} registros nesta página.</div>}
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -489,3 +501,4 @@ export default function Page() {
     </main>
   )
 }
+

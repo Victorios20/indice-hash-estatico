@@ -97,6 +97,31 @@ const findBucketForInsert = (buckets: Bucket[], startBucketId: number): number =
   return -1
 }
 
+const buildStatsResult = (
+  index: HashIndex,
+  start: number,
+  totalInserted: number,
+  collisions: number,
+  overflowedHomeBuckets: Set<number>
+): HashBuildResult => {
+  const end = performance.now()
+  const collisionsRate = totalInserted === 0 ? 0 : (collisions / totalInserted) * 100
+  const overflowedBuckets = overflowedHomeBuckets.size
+  const overflowRate = index.nb === 0 ? 0 : (overflowedBuckets / index.nb) * 100
+
+  return {
+    index,
+    stats: {
+      totalInserted,
+      collisions,
+      collisionsRate,
+      overflowedBuckets,
+      overflowRate,
+      buildTimeMs: end - start,
+    },
+  }
+}
+
 export const buildIndexFromPages = (
   pages: Page[],
   fr: number,
@@ -115,7 +140,6 @@ export const buildIndexFromPages = (
       const homeBucketId = hashKeyToBucket(key, nb, strategy)
       const homeBucket = index.buckets[homeBucketId]
 
-      // Colisão só conta quando o bucket home está cheio.
       const homeIsFull = homeBucket.entries.length >= homeBucket.capacity
       if (homeIsFull) {
         collisions += 1
@@ -140,22 +164,64 @@ export const buildIndexFromPages = (
     }
   }
 
-  const end = performance.now()
-  const collisionsRate = totalInserted === 0 ? 0 : (collisions / totalInserted) * 100
-  const overflowedBuckets = overflowedHomeBuckets.size
-  const overflowRate = nb === 0 ? 0 : (overflowedBuckets / nb) * 100
+  return buildStatsResult(index, start, totalInserted, collisions, overflowedHomeBuckets)
+}
 
-  return {
-    index,
-    stats: {
-      totalInserted,
-      collisions,
-      collisionsRate,
-      overflowedBuckets,
-      overflowRate,
-      buildTimeMs: end - start,
-    },
+const yieldToBrowser = async () => {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+}
+
+export const buildIndexFromPagesAsync = async (
+  pages: Page[],
+  fr: number,
+  nb: number,
+  strategy: HashFunctionName = 'djb2',
+  chunkSize = 5000
+): Promise<HashBuildResult> => {
+  const start = performance.now()
+  const index = createEmptyIndex(0, fr, nb)
+
+  let collisions = 0
+  let totalInserted = 0
+  let processedInChunk = 0
+  const overflowedHomeBuckets = new Set<number>()
+
+  for (const page of pages) {
+    for (const key of page.records) {
+      const homeBucketId = hashKeyToBucket(key, nb, strategy)
+      const homeBucket = index.buckets[homeBucketId]
+
+      const homeIsFull = homeBucket.entries.length >= homeBucket.capacity
+      if (homeIsFull) {
+        collisions += 1
+        overflowedHomeBuckets.add(homeBucketId)
+      }
+
+      const targetBucketId = findBucketForInsert(index.buckets, homeBucketId)
+      if (targetBucketId < 0) {
+        throw new Error('Sem espaço para inserir no índice. Verifique FR/NB.')
+      }
+
+      const entry: BucketEntry = {
+        key,
+        pageNumber: page.pageNumber,
+        homeBucketId,
+        bucketId: targetBucketId,
+        isOverflow: targetBucketId !== homeBucketId,
+      }
+
+      index.buckets[targetBucketId].entries.push(entry)
+      totalInserted += 1
+      processedInChunk += 1
+
+      if (processedInChunk >= chunkSize) {
+        processedInChunk = 0
+        await yieldToBrowser()
+      }
+    }
   }
+
+  return buildStatsResult(index, start, totalInserted, collisions, overflowedHomeBuckets)
 }
 
 export const searchKeyInIndex = (
@@ -190,7 +256,6 @@ export const searchKeyInIndex = (
       }
     }
 
-    // Sem remoções, ao encontrar bucket com vaga, a chave não pode estar mais à frente na sequência.
     if (bucket.entries.length < bucket.capacity) {
       const end = performance.now()
       return {
@@ -233,6 +298,49 @@ export const tableScanSearch = (key: string, pages: Page[]): TableScanResult => 
         scannedPages,
         timeMs: end - start,
       }
+    }
+  }
+
+  const end = performance.now()
+  return {
+    found: false,
+    key,
+    pagesRead: scannedPages.length,
+    costEstimatePages: scannedPages.length,
+    scannedPages,
+    timeMs: end - start,
+  }
+}
+
+export const tableScanSearchAsync = async (
+  key: string,
+  pages: Page[],
+  chunkSize = 200
+): Promise<TableScanResult> => {
+  const start = performance.now()
+  const scannedPages: Array<{ pageNumber: number; recordsRead: string[] }> = []
+  let processedInChunk = 0
+
+  for (const page of pages) {
+    scannedPages.push({ pageNumber: page.pageNumber, recordsRead: page.records })
+
+    if (page.records.includes(key)) {
+      const end = performance.now()
+      return {
+        found: true,
+        key,
+        pageNumber: page.pageNumber,
+        pagesRead: scannedPages.length,
+        costEstimatePages: scannedPages.length,
+        scannedPages,
+        timeMs: end - start,
+      }
+    }
+
+    processedInChunk += 1
+    if (processedInChunk >= chunkSize) {
+      processedInChunk = 0
+      await yieldToBrowser()
     }
   }
 
