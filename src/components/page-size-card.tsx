@@ -1,7 +1,7 @@
-'use client'
+﻿'use client'
 
 import React, { useMemo } from 'react'
-import { Layers, AlertCircle } from 'lucide-react'
+import { Layers, AlertCircle, Loader2 } from 'lucide-react'
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -15,9 +15,10 @@ type Props = {
   disabled?: boolean
   canDivide: boolean
   onDivide: () => void
+  isLoading?: boolean
 }
 
-export function PageSizeCard({ value, onChange, disabled, canDivide, onDivide }: Props) {
+export function PageSizeCard({ value, onChange, disabled, canDivide, onDivide, isLoading }: Props) {
   const parsed = useMemo(() => {
     if (value.trim().length === 0) return { ok: false, n: 0 }
     const n = Number(value)
@@ -61,13 +62,15 @@ export function PageSizeCard({ value, onChange, disabled, canDivide, onDivide }:
           </Alert>
         )}
 
-        <Button
-          type="button"
-          className="w-full rounded-xl"
-          disabled={!canDivide}
-          onClick={onDivide}
-        >
-          Dividir em páginas
+        <Button type="button" className="w-full rounded-xl" disabled={!canDivide || isLoading} onClick={onDivide}>
+          {isLoading ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Dividindo...
+            </>
+          ) : (
+            'Dividir em páginas'
+          )}
         </Button>
 
         {!canDivide && (

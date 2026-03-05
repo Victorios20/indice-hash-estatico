@@ -1,7 +1,7 @@
 ﻿'use client'
 
 import React, { useMemo } from 'react'
-import { Boxes, AlertCircle } from 'lucide-react'
+import { Boxes, AlertCircle, Loader2 } from 'lucide-react'
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -19,6 +19,7 @@ type Props = {
   canCreate: boolean
   onCreate: () => void
   created?: { fr: number; nb: number }
+  isLoading?: boolean
 }
 
 export function IndexSetupCard({
@@ -31,6 +32,7 @@ export function IndexSetupCard({
   canCreate,
   onCreate,
   created,
+  isLoading,
 }: Props) {
   const frParsed = useMemo(() => {
     const raw = frValue.trim()
@@ -94,8 +96,15 @@ export function IndexSetupCard({
           </div>
         </div>
 
-        <Button type="button" className="w-full rounded-xl" disabled={!canCreate} onClick={onCreate}>
-          Construir índice
+        <Button type="button" className="w-full rounded-xl" disabled={!canCreate || isLoading} onClick={onCreate}>
+          {isLoading ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Construindo...
+            </>
+          ) : (
+            'Construir índice'
+          )}
         </Button>
 
         {!canCreate && (
