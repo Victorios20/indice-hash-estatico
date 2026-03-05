@@ -3,6 +3,7 @@
   pageNumber: number
   homeBucketId: number
   bucketId: number
+  isOverflow: boolean
 }
 
 export type Bucket = {
@@ -23,6 +24,8 @@ export type HashBuildStats = {
   totalInserted: number
   collisions: number
   collisionsRate: number
+  overflowedBuckets: number
+  overflowRate: number
   buildTimeMs: number
 }
 
@@ -30,4 +33,3 @@ export type HashBuildResult = {
   index: HashIndex
   stats: HashBuildStats
 }
-

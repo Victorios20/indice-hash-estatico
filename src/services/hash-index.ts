@@ -9,6 +9,26 @@ import type {
 
 export type { HashFunctionName } from '@/domain/hash-index'
 
+export type IndexSearchResult = {
+  found: boolean
+  key: string
+  pageNumber?: number
+  bucketsProbed: number
+  costEstimatePages: number
+  visitedBuckets: number[]
+  timeMs: number
+}
+
+export type TableScanResult = {
+  found: boolean
+  key: string
+  pageNumber?: number
+  pagesRead: number
+  costEstimatePages: number
+  scannedPages: Array<{ pageNumber: number; recordsRead: string[] }>
+  timeMs: number
+}
+
 export const calculateNB = (nr: number, fr: number): number => {
   if (nr <= 0 || fr <= 0) return 0
   return Math.floor(nr / fr) + 1
@@ -88,15 +108,18 @@ export const buildIndexFromPages = (
 
   let collisions = 0
   let totalInserted = 0
+  const overflowedHomeBuckets = new Set<number>()
 
   for (const page of pages) {
     for (const key of page.records) {
       const homeBucketId = hashKeyToBucket(key, nb, strategy)
       const homeBucket = index.buckets[homeBucketId]
 
-      // Regra do projeto (HU07): conta colisão só quando o bucket de origem está cheio.
-      if (homeBucket.entries.length >= homeBucket.capacity) {
+      // Colisão só conta quando o bucket home está cheio.
+      const homeIsFull = homeBucket.entries.length >= homeBucket.capacity
+      if (homeIsFull) {
         collisions += 1
+        overflowedHomeBuckets.add(homeBucketId)
       }
 
       const targetBucketId = findBucketForInsert(index.buckets, homeBucketId)
@@ -109,6 +132,7 @@ export const buildIndexFromPages = (
         pageNumber: page.pageNumber,
         homeBucketId,
         bucketId: targetBucketId,
+        isOverflow: targetBucketId !== homeBucketId,
       }
 
       index.buckets[targetBucketId].entries.push(entry)
@@ -118,6 +142,8 @@ export const buildIndexFromPages = (
 
   const end = performance.now()
   const collisionsRate = totalInserted === 0 ? 0 : (collisions / totalInserted) * 100
+  const overflowedBuckets = overflowedHomeBuckets.size
+  const overflowRate = nb === 0 ? 0 : (overflowedBuckets / nb) * 100
 
   return {
     index,
@@ -125,7 +151,98 @@ export const buildIndexFromPages = (
       totalInserted,
       collisions,
       collisionsRate,
+      overflowedBuckets,
+      overflowRate,
       buildTimeMs: end - start,
     },
+  }
+}
+
+export const searchKeyInIndex = (
+  key: string,
+  pages: Page[],
+  index: HashIndex,
+  strategy: HashFunctionName = 'djb2'
+): IndexSearchResult => {
+  const start = performance.now()
+  const visitedBuckets: number[] = []
+  const homeBucketId = hashKeyToBucket(key, index.nb, strategy)
+
+  for (let offset = 0; offset < index.nb; offset += 1) {
+    const bucketId = (homeBucketId + offset) % index.nb
+    const bucket = index.buckets[bucketId]
+    visitedBuckets.push(bucketId)
+
+    const hit = bucket.entries.find((entry) => entry.key === key)
+    if (hit) {
+      const page = pages[hit.pageNumber - 1]
+      const foundInPage = Boolean(page?.records.includes(key))
+      const end = performance.now()
+
+      return {
+        found: foundInPage,
+        key,
+        pageNumber: foundInPage ? hit.pageNumber : undefined,
+        bucketsProbed: visitedBuckets.length,
+        costEstimatePages: visitedBuckets.length + (foundInPage ? 1 : 0),
+        visitedBuckets,
+        timeMs: end - start,
+      }
+    }
+
+    // Sem remoções, ao encontrar bucket com vaga, a chave não pode estar mais à frente na sequência.
+    if (bucket.entries.length < bucket.capacity) {
+      const end = performance.now()
+      return {
+        found: false,
+        key,
+        bucketsProbed: visitedBuckets.length,
+        costEstimatePages: visitedBuckets.length,
+        visitedBuckets,
+        timeMs: end - start,
+      }
+    }
+  }
+
+  const end = performance.now()
+  return {
+    found: false,
+    key,
+    bucketsProbed: visitedBuckets.length,
+    costEstimatePages: visitedBuckets.length,
+    visitedBuckets,
+    timeMs: end - start,
+  }
+}
+
+export const tableScanSearch = (key: string, pages: Page[]): TableScanResult => {
+  const start = performance.now()
+  const scannedPages: Array<{ pageNumber: number; recordsRead: string[] }> = []
+
+  for (const page of pages) {
+    scannedPages.push({ pageNumber: page.pageNumber, recordsRead: page.records })
+
+    if (page.records.includes(key)) {
+      const end = performance.now()
+      return {
+        found: true,
+        key,
+        pageNumber: page.pageNumber,
+        pagesRead: scannedPages.length,
+        costEstimatePages: scannedPages.length,
+        scannedPages,
+        timeMs: end - start,
+      }
+    }
+  }
+
+  const end = performance.now()
+  return {
+    found: false,
+    key,
+    pagesRead: scannedPages.length,
+    costEstimatePages: scannedPages.length,
+    scannedPages,
+    timeMs: end - start,
   }
 }

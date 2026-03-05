@@ -1,7 +1,7 @@
 ﻿'use client'
 
 import React, { useMemo, useRef, useState } from 'react'
-import { Upload, AlertCircle, CheckCircle2, Boxes, Hash } from 'lucide-react'
+import { Upload, AlertCircle, CheckCircle2, Boxes, Hash, Search } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -15,12 +15,15 @@ import { IndexSetupCard } from '@/components/index-setup-card'
 
 import type { Page } from '@/domain/page'
 import type { HashBuildStats, HashFunctionName, HashIndex } from '@/domain/hash-index'
+import type { IndexSearchResult, TableScanResult } from '@/services/hash-index'
 import { buildPages } from '@/services/paging'
 import {
   buildIndexFromPages,
   calculateNB,
   hashKeyToBucket,
   isValidNB,
+  searchKeyInIndex,
+  tableScanSearch,
 } from '@/services/hash-index'
 
 type LoadState =
@@ -51,9 +54,12 @@ export default function Page() {
   const [fr, setFr] = useState<string>('4')
   const [hashFunction, setHashFunction] = useState<HashFunctionName>('djb2')
   const [sampleKey, setSampleKey] = useState<string>('')
+  const [searchKey, setSearchKey] = useState<string>('')
 
   const [hashIndex, setHashIndex] = useState<HashIndex | null>(null)
   const [buildStats, setBuildStats] = useState<HashBuildStats | null>(null)
+  const [indexSearchResult, setIndexSearchResult] = useState<IndexSearchResult | null>(null)
+  const [tableScanResult, setTableScanResult] = useState<TableScanResult | null>(null)
 
   const totalWords = useMemo(() => words.length, [words])
 
@@ -94,6 +100,34 @@ export default function Page() {
     return hashKeyToBucket(sampleKey.trim(), nb, hashFunction)
   }, [sampleKey, nb, hashFunction])
 
+  const canSearch = useMemo(() => {
+    return hashIndex !== null && searchKey.trim().length > 0
+  }, [hashIndex, searchKey])
+
+  const canScan = useMemo(() => {
+    return pagesMeta.status === 'ready' && searchKey.trim().length > 0
+  }, [pagesMeta.status, searchKey])
+
+  const comparison = useMemo(() => {
+    if (!indexSearchResult || !tableScanResult) return null
+
+    const timeDiffMs = tableScanResult.timeMs - indexSearchResult.timeMs
+    const costDiffPages = tableScanResult.costEstimatePages - indexSearchResult.costEstimatePages
+    const timeGainPercent =
+      tableScanResult.timeMs <= 0 ? 0 : (timeDiffMs / tableScanResult.timeMs) * 100
+    const costGainPercent =
+      tableScanResult.costEstimatePages <= 0
+        ? 0
+        : (costDiffPages / tableScanResult.costEstimatePages) * 100
+
+    return {
+      timeDiffMs,
+      costDiffPages,
+      timeGainPercent,
+      costGainPercent,
+    }
+  }, [indexSearchResult, tableScanResult])
+
   const reset = () => {
     setWords([])
     setLoadState({ status: 'idle' })
@@ -103,6 +137,9 @@ export default function Page() {
     setHashIndex(null)
     setBuildStats(null)
     setSampleKey('')
+    setSearchKey('')
+    setIndexSearchResult(null)
+    setTableScanResult(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -112,6 +149,8 @@ export default function Page() {
     pagesRef.current = []
     setHashIndex(null)
     setBuildStats(null)
+    setIndexSearchResult(null)
+    setTableScanResult(null)
 
     try {
       if (!file.name.toLowerCase().endsWith('.txt')) {
@@ -161,6 +200,8 @@ export default function Page() {
 
     setHashIndex(null)
     setBuildStats(null)
+    setIndexSearchResult(null)
+    setTableScanResult(null)
 
     setPagesMeta({
       status: 'ready',
@@ -176,6 +217,25 @@ export default function Page() {
     const result = buildIndexFromPages(pagesRef.current, frValidation.n, nb, hashFunction)
     setHashIndex(result.index)
     setBuildStats(result.stats)
+    setIndexSearchResult(null)
+  }
+
+  const handleSearchByIndex = () => {
+    if (!hashIndex) return
+
+    const key = searchKey.trim()
+    if (!key) return
+
+    const result = searchKeyInIndex(key, pagesRef.current, hashIndex, hashFunction)
+    setIndexSearchResult(result)
+  }
+
+  const handleTableScan = () => {
+    const key = searchKey.trim()
+    if (!key) return
+
+    const result = tableScanSearch(key, pagesRef.current)
+    setTableScanResult(result)
   }
 
   return (
@@ -185,7 +245,7 @@ export default function Page() {
           <div className="flex flex-col gap-2">
             <h1 className="text-3xl font-semibold tracking-tight">Índice Hash Estático</h1>
             <p className="text-muted-foreground">
-              Carregue o arquivo, divida em páginas e construa o índice hash.
+              Carregue o arquivo, divida em páginas, construa o índice e compare com table scan.
             </p>
           </div>
           <ThemeToggle />
@@ -238,9 +298,7 @@ export default function Page() {
               )}
 
               {loadState.status === 'loading' && (
-                <div className="rounded-xl border bg-muted/40 p-4 text-sm">
-                  Carregando arquivo...
-                </div>
+                <div className="rounded-xl border bg-muted/40 p-4 text-sm">Carregando arquivo...</div>
               )}
 
               {loadState.status === 'success' && (
@@ -356,6 +414,7 @@ export default function Page() {
                   setFr(v)
                   setHashIndex(null)
                   setBuildStats(null)
+                  setIndexSearchResult(null)
                 }}
                 nr={totalWords}
                 nb={nb}
@@ -375,7 +434,7 @@ export default function Page() {
                     Índice construído
                   </CardTitle>
                   <CardDescription>
-                    Registros inseridos com resolução de colisões por linear probing.
+                    Registros inseridos com resolução de colisões e estratégia de overflow.
                   </CardDescription>
                 </CardHeader>
 
@@ -409,6 +468,14 @@ export default function Page() {
                             <span className="text-muted-foreground">Taxa de colisão</span>
                             <span className="font-semibold">{buildStats.collisionsRate.toFixed(2)}%</span>
                           </div>
+                          <div className="mt-2 flex items-center justify-between">
+                            <span className="text-muted-foreground">Buckets com overflow</span>
+                            <span className="font-semibold">{buildStats.overflowedBuckets}</span>
+                          </div>
+                          <div className="mt-2 flex items-center justify-between">
+                            <span className="text-muted-foreground">Taxa de overflow</span>
+                            <span className="font-semibold">{buildStats.overflowRate.toFixed(2)}%</span>
+                          </div>
                         </div>
                       </div>
 
@@ -425,6 +492,7 @@ export default function Page() {
                             {bucket.entries.slice(0, 3).map((entry) => (
                               <div key={`${bucket.id}-${entry.key}`}>
                                 {entry.key} -&gt; página {entry.pageNumber} (home {entry.homeBucketId})
+                                {entry.isOverflow ? ' [overflow]' : ''}
                               </div>
                             ))}
                             {bucket.entries.length === 0 && <div>Sem entradas.</div>}
@@ -436,11 +504,134 @@ export default function Page() {
                 </CardContent>
               </Card>
             </div>
+
+            <div className="lg:col-span-2">
+              <Card className="rounded-2xl">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Search className="h-5 w-5" />
+                    Busca e comparação
+                  </CardTitle>
+                  <CardDescription>Busque por índice e compare com table scan.</CardDescription>
+                </CardHeader>
+
+                <CardContent className="space-y-4">
+                  <div className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
+                    <Input
+                      placeholder="Digite a chave de busca"
+                      value={searchKey}
+                      onChange={(e) => setSearchKey(e.target.value)}
+                    />
+
+                    <Button type="button" onClick={handleSearchByIndex} disabled={!canSearch}>
+                      Buscar no índice
+                    </Button>
+
+                    <Button type="button" variant="outline" onClick={handleTableScan} disabled={!canScan}>
+                      Table scan
+                    </Button>
+                  </div>
+
+                  {indexSearchResult && (
+                    <div className="rounded-xl border p-4 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Busca por índice</span>
+                        <span className="font-semibold">
+                          {indexSearchResult.found ? 'Encontrada' : 'Não encontrada'}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="text-muted-foreground">Página</span>
+                        <span className="font-semibold">{indexSearchResult.pageNumber ?? '-'}</span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="text-muted-foreground">Buckets visitados</span>
+                        <span className="font-semibold">{indexSearchResult.visitedBuckets.join(', ')}</span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="text-muted-foreground">Custo estimado (leituras)</span>
+                        <span className="font-semibold">{indexSearchResult.costEstimatePages}</span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="text-muted-foreground">Tempo</span>
+                        <span className="font-semibold">{indexSearchResult.timeMs.toFixed(3)} ms</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {tableScanResult && (
+                    <div className="rounded-xl border p-4 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Table scan</span>
+                        <span className="font-semibold">
+                          {tableScanResult.found ? 'Encontrada' : 'Não encontrada'}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="text-muted-foreground">Página</span>
+                        <span className="font-semibold">{tableScanResult.pageNumber ?? '-'}</span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="text-muted-foreground">Páginas lidas</span>
+                        <span className="font-semibold">{tableScanResult.pagesRead}</span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="text-muted-foreground">Custo estimado (leituras)</span>
+                        <span className="font-semibold">{tableScanResult.costEstimatePages}</span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="text-muted-foreground">Tempo</span>
+                        <span className="font-semibold">{tableScanResult.timeMs.toFixed(3)} ms</span>
+                      </div>
+
+                      <div className="mt-4 rounded-lg border bg-muted/30 p-3 text-xs">
+                        <div className="mb-2 font-medium">Registros lidos no scan (prévia)</div>
+                        <div className="space-y-2">
+                          {tableScanResult.scannedPages.slice(0, 3).map((page) => (
+                            <div key={page.pageNumber}>
+                              <div className="font-medium">Página {page.pageNumber}</div>
+                              <div className="text-muted-foreground">
+                                {page.recordsRead.slice(0, 8).join(', ')}
+                                {page.recordsRead.length > 8 ? ' ...' : ''}
+                              </div>
+                            </div>
+                          ))}
+                          {tableScanResult.scannedPages.length > 3 && (
+                            <div className="text-muted-foreground">
+                              + {tableScanResult.scannedPages.length - 3} páginas lidas.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {comparison && (
+                    <div className="rounded-xl border p-4 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Diferença de tempo (scan - índice)</span>
+                        <span className="font-semibold">{comparison.timeDiffMs.toFixed(3)} ms</span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="text-muted-foreground">Ganho percentual de tempo</span>
+                        <span className="font-semibold">{comparison.timeGainPercent.toFixed(2)}%</span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="text-muted-foreground">Diferença de custo (páginas)</span>
+                        <span className="font-semibold">{comparison.costDiffPages}</span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="text-muted-foreground">Ganho percentual de custo</span>
+                        <span className="font-semibold">{comparison.costGainPercent.toFixed(2)}%</span>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </div>
       </div>
     </main>
   )
 }
-
-
