@@ -190,7 +190,7 @@ const buildStatsResult = (
   }
 }
 
-export const buildIndexFromPages = (
+export const buildIndexFromPages = ( //constrói o indice a partir das paginas
   pages: Page[],
   fr: number,
   nb: number,
@@ -212,7 +212,7 @@ export const buildIndexFromPages = (
 
       const homeIsFull = homeBucket.entries.length >= homeBucket.capacity
       if (homeIsFull) {
-        collisions += 1
+        collisions += 1 //contagem de colisão 
         overflowedHomeBuckets.add(homeBucketId)
       }
 
@@ -304,7 +304,7 @@ export const buildIndexFromPagesAsync = async (
   return buildStatsResult(index, start, totalInserted, collisions, overflowedHomeBuckets)
 }
 
-export const searchKeyInIndex = (
+export const searchKeyInIndex = ( //pesquisa a palavra/chave no indice
   key: string,
   pages: Page[],
   index: HashIndex,
@@ -317,7 +317,7 @@ export const searchKeyInIndex = (
   for (let offset = 0; offset < index.nb; offset += 1) {
     const bucketId = (homeBucketId + offset) % index.nb
     const bucket = index.buckets[bucketId]
-    visitedBuckets.push(bucketId)
+    visitedBuckets.push(bucketId) //contagem de buckets visitados
 
     const hit = bucket.entries.find((entry) => entry.key === key)
     if (hit) {
@@ -361,7 +361,7 @@ export const searchKeyInIndex = (
 }
 
 export const tableScanSearch = (key: string, pages: Page[]): TableScanResult => {
-  const start = performance.now()
+  const start = performance.now() 
   const scannedPages: Array<{ pageNumber: number; recordsRead: string[] }> = []
 
   for (const page of pages) {

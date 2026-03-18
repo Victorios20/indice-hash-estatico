@@ -1,4 +1,4 @@
-import type { Page } from '@/domain/page'
+﻿import type { Page } from '@/domain/page'
 
 const calculateTotalPages = (recordsLength: number, pageSize: number): number => {
   if (pageSize <= 0 || recordsLength <= 0) return 0
@@ -30,7 +30,7 @@ const yieldToBrowser = async () => {
   await new Promise<void>((resolve) => setTimeout(resolve, 0))
 }
 
-export const buildPagesAsync = async (
+export const buildPagesAsync = async ( //preenchimento das tabelas
   records: string[],
   pageSize: number,
   chunkSize = 5000
