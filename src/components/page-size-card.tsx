@@ -20,10 +20,10 @@ type Props = {
 
 export function PageSizeCard({ value, onChange, disabled, canDivide, onDivide, isLoading }: Props) {
   const parsed = useMemo(() => {
-    if (value.trim().length === 0) return { ok: false, n: 0 }
-    const n = Number(value)
-    if (!Number.isFinite(n)) return { ok: false, n: 0 }
-    if (!Number.isInteger(n)) return { ok: false, n: 0 }
+    if (value.trim().length === 0) return { ok: false, n: 0 } // vazio ? 
+    const n = Number(value) //Transforma em um numero 
+    if (!Number.isFinite(n)) return { ok: false, n: 0 } //NaN
+    if (!Number.isInteger(n)) return { ok: false, n: 0 }// é Inteiro ?
     if (n <= 0) return { ok: false, n: 0 }
     return { ok: true, n }
   }, [value])

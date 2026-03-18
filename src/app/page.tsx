@@ -97,9 +97,9 @@ export default function Page() {
     setToasts((prev) => prev.filter((t) => t.id !== id))
   }
 
-  const totalWords = useMemo(() => words.length, [words])
+  const totalWords = useMemo(() => words.length, [words]) //words.lengh = quantidade de palavras total 
 
-  const pageSizeValidation = useMemo(() => {
+  const pageSizeValidation = useMemo(() => { // validação do page size, verifica se é um numero inteiro maior que zero
     const raw = pageSize.trim()
     if (raw.length === 0) return { ok: false, n: 0 }
     const n = Number(raw)
@@ -200,10 +200,10 @@ export default function Page() {
     setHashIndex(null)
     setBuildStats(null)
     setIndexSearchResult(null)
-    setTableScanResult(null)
+    setTableScanResult(null) //reseta tudo para um novo arquivo 
 
     try {
-      if (!file.name.toLowerCase().endsWith('.txt')) {
+      if (!file.name.toLowerCase().endsWith('.txt')) { //verifica se é .txt 
         setWords([])
         setLoadState({ status: 'error', message: 'Selecione um arquivo .txt' })
         if (fileInputRef.current) fileInputRef.current.value = ''
@@ -211,11 +211,11 @@ export default function Page() {
         return
       }
 
-      const text = await file.text()
+      const text = await file.text() //salva como string
       const lines = text
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0)
+        .split(/\r?\n/) // quebra em linhas 
+        .map((line) => line.trim())//aplica trim 
+        .filter((line) => line.length > 0) //elimina linhas vazias
 
       if (lines.length === 0) {
         setWords([])
@@ -225,7 +225,7 @@ export default function Page() {
         return
       }
 
-      setWords(lines)
+      setWords(lines) // armazena as palavras tratadas em array 
       setLoadState({ status: 'success', total: lines.length, fileName: file.name })
       addToast('success', 'Arquivo carregado', `${lines.length} palavras lidas com sucesso.`)
     } catch {
