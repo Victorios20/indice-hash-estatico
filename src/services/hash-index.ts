@@ -330,7 +330,7 @@ export const searchKeyInIndex = (
         key,
         pageNumber: foundInPage ? hit.pageNumber : undefined,
         bucketsProbed: visitedBuckets.length,
-        costEstimatePages: visitedBuckets.length + (foundInPage ? 1 : 0),
+        costEstimatePages: foundInPage ? 1 : 0,
         visitedBuckets,
         timeMs: end - start,
       }
@@ -342,7 +342,7 @@ export const searchKeyInIndex = (
         found: false,
         key,
         bucketsProbed: visitedBuckets.length,
-        costEstimatePages: visitedBuckets.length,
+        costEstimatePages: 0,
         visitedBuckets,
         timeMs: end - start,
       }
@@ -354,7 +354,7 @@ export const searchKeyInIndex = (
     found: false,
     key,
     bucketsProbed: visitedBuckets.length,
-    costEstimatePages: visitedBuckets.length,
+    costEstimatePages: 0,
     visitedBuckets,
     timeMs: end - start,
   }
@@ -434,4 +434,3 @@ export const tableScanSearchAsync = async (
     timeMs: end - start,
   }
 }
-
